@@ -1,43 +1,77 @@
-//
-//  dTextUITests.swift
-//  dTextUITests
-//
-//  Created by Assaf Feuerstein on 20/10/2026.
-//
-
 import XCTest
+import AppKit
 
 final class dTextUITests: XCTestCase {
-
-    override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
-        continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
+    override func setUpWithError() throws { continueAfterFailure = false }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testCreateAndFindSnippet() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
         app.launch()
-
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        app.buttons["newSnippetButton"].click()
+        let title = app.textFields["snippetTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.click()
+        title.typeKey("a", modifierFlags: .command)
+        title.typeText("Test signature")
+        let abbreviation = app.textFields["snippetAbbreviation"]
+        abbreviation.click()
+        abbreviation.typeText(";test")
+        let body = app.textViews["snippetBody"]
+        body.click()
+        body.typeText("Made with dText")
+        let search = app.textFields["snippetSearch"]
+        search.click()
+        search.typeText("Test signature")
+        XCTAssertTrue(app.staticTexts["Test signature"].firstMatch.exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "dText Library"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+    func testPlaygroundExpandsAndPositionsCursor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
+        app.launch()
+        app.buttons["Playground"].click()
+        let text = app.textViews["playgroundInput"]
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.click()
+        text.typeText(";log")
+        let expanded = NSPredicate(format: "value == %@", "console.log();")
+        expectation(for: expanded, evaluatedWith: text)
+        waitForExpectations(timeout: 5)
+        text.typeText("hello")
+        XCTAssertEqual(text.value as? String, "console.log(hello);")
+    }
+
+    @MainActor
+    func testCloseKeepsMenuBarAliveAndReopenRestoresDock() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting"]
+        app.launch()
+        let runningApp = try XCTUnwrap(NSRunningApplication.runningApplications(withBundleIdentifier: "il.co.druid.dText")
+            .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) })
+        XCTAssertEqual(runningApp.activationPolicy, .regular)
+
+        app.windows["dText"].buttons[XCUIIdentifierCloseWindow].click()
+        let hiddenFromDock = NSPredicate { _, _ in runningApp.activationPolicy == .accessory }
+        expectation(for: hiddenFromDock, evaluatedWith: nil)
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(runningApp.isTerminated)
+        XCTAssertFalse(app.windows["dText"].exists)
+
+        let statusItem = app.statusItems.firstMatch
+        XCTAssertTrue(statusItem.waitForExistence(timeout: 5))
+        statusItem.click()
+        app.menuItems["Open dText"].click()
+        XCTAssertTrue(app.windows["dText"].waitForExistence(timeout: 5))
+        XCTAssertEqual(runningApp.activationPolicy, .regular)
+
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(app.checkBoxes["openAtLogin"].waitForExistence(timeout: 5))
     }
 }
