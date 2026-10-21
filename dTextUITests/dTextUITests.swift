@@ -7,7 +7,7 @@ final class dTextUITests: XCTestCase {
     @MainActor
     func testCreateAndFindSnippet() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = ["--uitesting", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
         app.buttons["newSnippetButton"].click()
         let title = app.textFields["snippetTitle"]
@@ -34,7 +34,7 @@ final class dTextUITests: XCTestCase {
     @MainActor
     func testPlaygroundExpandsAndPositionsCursor() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = ["--uitesting", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
         app.buttons["Playground"].click()
         let text = app.textViews["playgroundInput"]
@@ -51,7 +51,7 @@ final class dTextUITests: XCTestCase {
     @MainActor
     func testCloseKeepsMenuBarAliveAndReopenRestoresDock() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
+        app.launchArguments = ["--uitesting", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
         let runningApp = try XCTUnwrap(NSRunningApplication.runningApplications(withBundleIdentifier: "il.co.druid.dText")
             .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) })
@@ -72,6 +72,6 @@ final class dTextUITests: XCTestCase {
         XCTAssertEqual(runningApp.activationPolicy, .regular)
 
         app.typeKey(",", modifierFlags: .command)
-        XCTAssertTrue(app.checkBoxes["openAtLogin"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["openAtLogin"].waitForExistence(timeout: 5))
     }
 }

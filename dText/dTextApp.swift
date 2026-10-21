@@ -18,7 +18,7 @@ struct dTextApp: App {
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let store = LibraryStore(inMemory: testing)
         _store = State(initialValue: store)
-        _service = State(initialValue: ExpansionService(store: store))
+        _service = State(initialValue: ExpansionService(store: store, monitoringEnabled: !testing))
     }
 
     var body: some Scene {

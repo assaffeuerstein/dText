@@ -6,12 +6,22 @@ A native macOS text expander built with SwiftUI and AppKit. Create an abbreviati
 
 1. Open `dText.xcodeproj` in Xcode 27 or newer.
 2. Select the **dText** scheme and **My Mac**, choose your signing team if needed, then run.
-3. Click **Enable text expansion** and enable dText in **System Settings → Privacy & Security → Accessibility**. Permission status refreshes automatically.
+3. Click **Enable text expansion** and enable the running dText copy in **System Settings → Privacy & Security → Device Control and Data Access** (called **Accessibility** before macOS 27). Permission status refreshes automatically, including when returning from System Settings.
 4. In TextEdit or another editor, type `;thanks`. It should become “Thanks so much for your help. I really appreciate it!”
 
 The deployment target is macOS 14. The project has no third-party dependencies. The app is intentionally outside App Sandbox: global keyboard event interception and insertion require Accessibility access. Developer ID signing and notarization are separate distribution steps.
 
 The **Playground** works without system permissions. Closing the last window removes dText from the Dock while keeping text expansion and the menu bar active. Choose **Open dText** from the menu bar to reopen the library and restore its Dock icon; use **Quit dText** to stop it.
+
+### Permission enabled, but shortcuts do not work
+
+macOS authorizes signed applications, not just the name `dText.app`. A locally signed packaged build and an Apple Development-signed Xcode build can have the same bundle identifier but different signing requirements. An enabled entry for the old build does not establish that the running build has access.
+
+1. In dText Settings, click **Show running app in Finder**. When running from Xcode this is the app under `DerivedData/.../Build/Products/Debug/`.
+2. In the macOS permission list, remove the existing dText entry, add that exact app copy, and enable it.
+3. Stop and run dText again in Xcode. Check **Keyboard control: Allowed for this copy** and **Keyboard listener: Connected** in dText Settings, then test a currently configured abbreviation in TextEdit.
+
+Use consistent Apple Development signing for regular debug runs and avoid alternating with an ad-hoc-signed build under the same bundle identifier. Permission diagnostics are written to the Xcode console only when the permission state changes; typed content is never logged. The app neither resets macOS privacy settings nor grants itself permission.
 
 Enable **Settings → Startup → Open dText at login** to launch it automatically when you sign in. This uses macOS Login Items, and the setting reflects changes made in System Settings. If macOS requires approval, follow the **Approve in Login Items…** button. Keep the app in a stable location, such as `/Applications`, before enabling login startup.
 
@@ -80,11 +90,10 @@ dText implements the core Typinator-style text expansion workflow with its own i
 
 ```sh
 xcodebuild -project dText.xcodeproj -scheme dText \
-  -destination 'platform=macOS' -derivedDataPath /tmp/dText-build \
-  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= test
+  -destination 'platform=macOS' -derivedDataPath /tmp/dText-build test
 ```
 
-Unit tests cover matching, app scopes, separators, Unicode, regex time limits, dynamic fields, nesting, cursor offsets, import validation, persistence, corruption handling, and statistics. UI tests create/search a snippet and verify expansion with cursor placement in the playground. `--uitesting` uses an in-memory library and disables the global keyboard service.
+Use the same signing team as normal Xcode runs. Unit tests cover matching, app scopes, separators, Unicode, regex time limits, dynamic fields, nesting, cursor offsets, import validation, persistence, corruption handling, and statistics. UI tests create/search a snippet, verify expansion with cursor placement in the playground, and check closing to the menu bar and reopening with the Dock icon. `--uitesting` uses an in-memory library and disables the global keyboard service, including when opening Settings.
 
 Before distributing, test in TextEdit, Mail, a browser text area, and your preferred code editor with Accessibility granted. Verify immediate expansion, word separators, cancellation of input forms, clipboard restoration, rich text/image pasting, switching applications during an expansion, and Secure Input.
 

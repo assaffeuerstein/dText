@@ -25,9 +25,21 @@ struct SettingsView: View {
                 }.padding(.vertical, 8)
             }
             Section("Text expansion") {
-                LabeledContent("Accessibility", value: service.accessibilityGranted ? "Allowed" : "Permission required")
+                LabeledContent("Keyboard control", value: service.accessibilityGranted ? "Allowed for this copy" : "Permission required for this copy")
+                LabeledContent("Keyboard listener", value: service.isRunning ? "Connected" : "Not connected")
+                HStack {
+                    Button("Recheck permissions") { service.refreshPermissions() }
+                    Button("Show running app in Finder") { service.revealRunningApp() }
+                }
                 if !service.accessibilityGranted {
-                    Button("Open Accessibility settings…") { service.requestAccessibility() }
+                    Button("Open macOS permission settings…") { service.requestAccessibility() }
+                    Text("If dText is already enabled in Privacy & Security, remove its old entry and add the running copy shown in Finder. Then stop and rerun dText in Xcode, or quit and reopen it. The setting is called Device Control and Data Access on macOS 27, and Accessibility on earlier versions.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(service.runningAppURL.path).font(.system(size: 10, design: .monospaced))
+                        .textSelection(.enabled).foregroundStyle(.secondary)
+                }
+                if let error = service.keyboardConnectionError {
+                    Text(error).font(.caption).foregroundStyle(.orange)
                 }
                 Toggle("Pause all expansions", isOn: preference(\.isPaused))
                 Toggle("Restore clipboard after expanding", isOn: preference(\.restoreClipboard))
@@ -62,7 +74,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped).frame(width: 580, height: 700).tint(Theme.accent)
-            .onAppear { loginStatus = SMAppService.mainApp.status }
+            .onAppear { loginStatus = SMAppService.mainApp.status; service.refreshPermissions() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 loginStatus = SMAppService.mainApp.status
             }

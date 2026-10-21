@@ -2,10 +2,14 @@ import AppKit
 import ApplicationServices
 import Carbon
 import Observation
+import OSLog
 
 @MainActor @Observable
 final class ExpansionService {
     var accessibilityGranted = false
+    private(set) var accessibilityAPITrusted = false
+    private(set) var keyboardConnectionError: String?
+    private(set) var lastPermissionCheck: Date?
     var isRunning = false
     var secureInput = false
     var lastExpansion: String?
@@ -13,10 +17,13 @@ final class ExpansionService {
     var showQuickSearch: (() -> Void)?
 
     let store: LibraryStore
+    private let monitoringEnabled: Bool
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionTimer: Timer?
     private var activationObserver: NSObjectProtocol?
+    private var appActivationObserver: NSObjectProtocol?
+    private let logger = Logger(subsystem: "il.co.druid.dText", category: "Permissions")
     private var matcher = ExpansionMatcher()
     private var isInserting = false
     private var insertionPID: pid_t?
@@ -29,19 +36,35 @@ final class ExpansionService {
     private var restoreTask: Task<Void, Never>?
     private var previousApp: NSRunningApplication?
 
-    init(store: LibraryStore) { self.store = store }
+    init(store: LibraryStore, monitoringEnabled: Bool = true) {
+        self.store = store
+        self.monitoringEnabled = monitoringEnabled
+    }
 
     var statusTitle: String {
         if store.library.preferences.isPaused { return "Expansion paused" }
-        if !accessibilityGranted { return "Setup required" }
+        if !accessibilityGranted { return "Permission required" }
         if secureInput { return "Secure input is active" }
-        return isRunning ? "Ready to expand" : "Connecting…"
+        return isRunning ? "Ready to expand" : "Keyboard unavailable"
+    }
+
+    var runningAppURL: URL { Bundle.main.bundleURL }
+
+    func revealRunningApp() {
+        NSWorkspace.shared.activateFileViewerSelecting([runningAppURL])
     }
 
     func start() {
-        guard permissionTimer == nil else { return }
+        guard monitoringEnabled, permissionTimer == nil else { return }
         refreshPermissions()
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPermissions() }
+        }
+        permissionTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        appActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshPermissions() }
         }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -64,16 +87,31 @@ final class ExpansionService {
     }
 
     func refreshPermissions() {
-        accessibilityGranted = AXIsProcessTrusted()
+        let previousAccess = accessibilityGranted
+        accessibilityAPITrusted = AXIsProcessTrusted()
+        // The engine inserts CGEvents; query that capability directly. AX trust
+        // alone can disagree with event access, particularly after changing builds.
+        accessibilityGranted = CGPreflightPostEventAccess()
+        if lastPermissionCheck == nil || previousAccess != accessibilityGranted {
+            logger.notice("Permission check: AX=\(self.accessibilityAPITrusted), postEvents=\(self.accessibilityGranted), app=\(self.runningAppURL.path, privacy: .public)")
+        }
+        lastPermissionCheck = Date()
         secureInput = IsSecureEventInputEnabled()
         if secureInput || store.library.preferences.isPaused { matcher.reset() }
-        if accessibilityGranted && tap == nil { installTap() }
+        if monitoringEnabled && accessibilityGranted && tap == nil { installTap() }
         if !accessibilityGranted && tap != nil { removeTap() }
+        if let tap {
+            if !CGEvent.tapIsEnabled(tap: tap) { CGEvent.tapEnable(tap: tap, enable: true) }
+            isRunning = CGEvent.tapIsEnabled(tap: tap)
+        }
+        if !accessibilityGranted { keyboardConnectionError = nil }
     }
 
     func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        accessibilityGranted = AXIsProcessTrustedWithOptions(options)
+        // Request the permission used by our filtering event tap and event posting.
+        // This only asks macOS to present its consent UI; it never grants access.
+        _ = CGRequestPostEventAccess()
+        refreshPermissions()
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 
@@ -93,14 +131,14 @@ final class ExpansionService {
             return MainActor.assumeIsolated { service.handle(type: type, event: event) }
         }, userInfo: Unmanaged.passUnretained(self).toOpaque())
         guard let tap else {
-            statusMessage = "Could not connect to keyboard events. Enable dText in Accessibility, then reopen it."
+            keyboardConnectionError = "macOS allows keyboard control, but the keyboard listener could not connect. Stop dText in Xcode and run it again, or quit and reopen this copy."
             return
         }
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        isRunning = true
-        statusMessage = nil
+        isRunning = CGEvent.tapIsEnabled(tap: tap)
+        keyboardConnectionError = isRunning ? nil : "The keyboard listener is disabled. Recheck permissions or restart this copy of dText."
     }
 
     private func removeTap() {
@@ -171,6 +209,8 @@ final class ExpansionService {
     }
 
     func insertFromSearch(_ snippet: Snippet) {
+        guard monitoringEnabled else { return }
+        refreshPermissions()
         guard accessibilityGranted else { requestAccessibility(); return }
         guard let target = previousApp, !target.isTerminated else {
             statusMessage = "Open the destination application before using Quick Search."
@@ -214,7 +254,7 @@ final class ExpansionService {
 
     private func perform(_ match: ExpansionMatch, target: NSRunningApplication, deliveredCount: Int) async {
         defer { finishInsertion(target: target) }
-        guard !insertionInvalidated, !IsSecureEventInputEnabled(),
+        guard !insertionInvalidated, CGPreflightPostEventAccess(), !IsSecureEventInputEnabled(),
               NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return }
         let snippet = match.snippet
         do {
@@ -233,7 +273,7 @@ final class ExpansionService {
                 target.activate()
                 try? await Task.sleep(for: .milliseconds(160))
             }
-            guard !insertionInvalidated, !IsSecureEventInputEnabled(), !target.isTerminated,
+            guard !insertionInvalidated, CGPreflightPostEventAccess(), !IsSecureEventInputEnabled(), !target.isTerminated,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return }
             let rendered = hasTemplate
                 ? try renderer.render(snippet.body, typedTrigger: match.typedTrigger, caseMode: snippet.caseMode)
@@ -348,6 +388,9 @@ final class ExpansionService {
         permissionTimer?.invalidate()
         permissionTimer = nil
         if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil
+        if let appActivationObserver { NotificationCenter.default.removeObserver(appActivationObserver) }
+        appActivationObserver = nil
         removeTap()
         restoreClipboardIfOwned()
         store.save()

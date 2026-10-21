@@ -163,17 +163,20 @@ struct ContentView: View {
                             Image(systemName: "hand.raised").padding(.top, 2)
                             VStack(alignment: .leading, spacing: 5) {
                                 Text("Enable text expansion").font(.system(size: 11, weight: .semibold))
-                                Text("Allow Accessibility access").font(.system(size: 10)).foregroundStyle(.secondary)
+                                Text("Allow this copy in macOS settings").font(.system(size: 10)).foregroundStyle(.secondary)
                             }
                             Image(systemName: "arrow.up.right").font(.system(size: 9))
                         }.padding(11).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Theme.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
                     }.buttonStyle(.plain)
+                    Button("Show running app") { service.revealRunningApp() }
+                        .buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(Theme.accent)
                 }
                 HStack(spacing: 6) {
                     Circle().fill(service.isRunning && !store.library.preferences.isPaused && !service.secureInput ? Theme.accent : .orange)
                         .frame(width: 6, height: 6)
                     Text(service.statusTitle).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        .help(service.keyboardConnectionError ?? service.statusTitle)
                     Spacer()
                 }
                 HStack(spacing: 5) {
